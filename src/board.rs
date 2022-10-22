@@ -7,8 +7,10 @@ impl Plugin for BoardPlugin {
 
         app.insert_resource(board)
             .add_event::<UpdateBoardEvent>()
+            .add_event::<ShearEvent>()
             .add_startup_system(board_startup)
             .add_system(Board::update)
+            .add_system(Board::shear);
     }
 }
 
@@ -21,6 +23,29 @@ fn board_startup(mut commands: Commands, mut render_writer: EventWriter<UpdateBo
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct Coord(pub isize, pub isize);
+
+impl std::ops::Add for Coord {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Coord(self.0 + rhs.0, self.1 + rhs.1)
+    }
+}
+impl std::ops::Sub for Coord {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        Coord(self.0 - rhs.0, self.1 - rhs.1)
+    }
+}
+impl std::ops::AddAssign for Coord {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+impl std::ops::SubAssign for Coord {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
 
 impl Coord {
     pub fn parity(self) -> isize {
@@ -83,13 +108,13 @@ impl Default for Board {
 pub struct BoardEntity(pub Entity);
 
 pub struct UpdateBoardEvent;
+pub struct ShearEvent(pub Coord, pub Coord);
 
 impl Board {
-    fn render(
     fn update(
         mut commands: Commands,
         board_entity: Res<BoardEntity>,
-        board: Res<Board>,
+        mut board: ResMut<Board>,
         asset_server: Res<AssetServer>,
         mut reader: EventReader<UpdateBoardEvent>,
     ) {
@@ -114,6 +139,7 @@ impl Board {
         for (coord, _) in board.tiles.iter_mut() {
             *coord -= center;
         }
+
         let triangle = asset_server.load("triangle.png");
         let circle = asset_server.load("circle.png");
 
@@ -166,5 +192,53 @@ impl Board {
         let mut board_entity = commands.entity(board_entity.0);
         board_entity.despawn_descendants();
         board_entity.push_children(&children);
+    }
+
+    fn shear(
+        mut board: ResMut<Board>,
+        mut reader: EventReader<ShearEvent>,
+        mut render_writer: EventWriter<UpdateBoardEvent>,
+    ) {
+        let ShearEvent(origin, end) = match reader.iter().next() {
+            Some(event) => event,
+            None => return,
+        };
+
+        if origin.parity() != end.parity() {
+            return;
+        }
+
+        let parity = origin.parity();
+        if origin.1 == end.1 {
+            let shear_coords = board
+                .tiles
+                .iter_mut()
+                .filter_map(|(coord, _)| (coord.1 * parity >= origin.1 * parity).then_some(coord));
+            let shear_distance = end.0 - origin.0;
+            for coord in shear_coords {
+                coord.0 += shear_distance;
+            }
+        } else if end.0 - origin.0 == end.1 - origin.1 {
+            let parity = origin.parity();
+            let shear_coords = board.tiles.iter_mut().filter_map(|(coord, _)| {
+                ((coord.0 - origin.0) * parity >= (coord.1 - origin.1) * parity).then_some(coord)
+            });
+            let shear_delta = *end - *origin;
+            for coord in shear_coords {
+                *coord += shear_delta;
+            }
+        } else if origin.0 - end.0 == end.1 - origin.1 {
+            let shear_coords = board.tiles.iter_mut().filter_map(|(coord, _)| {
+                ((origin.0 - coord.0) * parity >= (coord.1 - origin.1) * parity).then_some(coord)
+            });
+            let shear_delta = *end - *origin;
+            for coord in shear_coords {
+                *coord += shear_delta;
+            }
+        } else {
+            return;
+        }
+
+        render_writer.send(UpdateBoardEvent);
     }
 }
