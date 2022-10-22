@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy::utils::hashbrown::HashMap;
 
 pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
@@ -7,17 +6,17 @@ impl Plugin for BoardPlugin {
         let board = Board::default();
 
         app.insert_resource(board)
-            .add_event::<RenderBoardEvent>()
+            .add_event::<UpdateBoardEvent>()
             .add_startup_system(board_startup)
-            .add_system(Board::render);
+            .add_system(Board::update)
     }
 }
 
-fn board_startup(mut commands: Commands, mut render_writer: EventWriter<RenderBoardEvent>) {
+fn board_startup(mut commands: Commands, mut render_writer: EventWriter<UpdateBoardEvent>) {
     let board_entity = BoardEntity(commands.spawn_bundle(SpatialBundle::default()).id());
     commands.insert_resource(board_entity);
 
-    render_writer.send(RenderBoardEvent);
+    render_writer.send(UpdateBoardEvent);
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
@@ -54,7 +53,7 @@ pub struct Tile {
 }
 
 pub struct Board {
-    pub tiles: HashMap<Coord, Tile>,
+    pub tiles: Vec<(Coord, Tile)>,
 }
 
 impl Default for Board {
@@ -82,20 +81,39 @@ impl Default for Board {
 }
 
 pub struct BoardEntity(pub Entity);
-pub struct RenderBoardEvent;
+
+pub struct UpdateBoardEvent;
 
 impl Board {
     fn render(
+    fn update(
         mut commands: Commands,
         board_entity: Res<BoardEntity>,
         board: Res<Board>,
         asset_server: Res<AssetServer>,
-        mut reader: EventReader<RenderBoardEvent>,
+        mut reader: EventReader<UpdateBoardEvent>,
     ) {
         if reader.iter().next().is_none() {
             return;
         }
 
+        let bounds = board.tiles.iter().fold(
+            ((isize::MAX, isize::MIN), (isize::MAX, isize::MIN)),
+            |bounds, (next, _)| {
+                (
+                    (bounds.0 .0.min(next.0), bounds.0 .1.max(next.0)),
+                    (bounds.1 .0.min(next.1), bounds.1 .1.max(next.1)),
+                )
+            },
+        );
+        // Divide by 4 then multiply by 2 to ensure the result is even.
+        let center = Coord(
+            (bounds.0 .0 + bounds.0 .1) / 4 * 2,
+            (bounds.1 .0 + bounds.1 .1) / 4 * 2,
+        );
+        for (coord, _) in board.tiles.iter_mut() {
+            *coord -= center;
+        }
         let triangle = asset_server.load("triangle.png");
         let circle = asset_server.load("circle.png");
 
@@ -103,7 +121,7 @@ impl Board {
 
         let scale = 96.0;
 
-        for (&coord, &tile) in board.tiles.iter() {
+        for &(coord, tile) in board.tiles.iter() {
             let pos = coord.texture_coords(scale);
             let mut transform =
                 Transform::from_xyz(pos.0, pos.1, 1.0).with_scale(Vec3::from_array([0.4; 3]));
