@@ -5,10 +5,13 @@ impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<UpdateBoardEvent>()
             .add_event::<ShearEvent>()
+            .add_event::<TextCommandEvent>()
             .add_startup_system(create_board)
             .add_startup_system(board_startup)
             .add_system(update)
-            .add_system(shear);
+            .add_system(shear)
+            .add_system(text_input)
+            .add_system(text_command);
     }
 }
 
@@ -19,7 +22,7 @@ fn board_startup(mut commands: Commands, mut render_writer: EventWriter<UpdateBo
     render_writer.send(UpdateBoardEvent);
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, Component)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, Default, Component)]
 pub struct Coord(pub isize, pub isize);
 
 impl std::ops::Add for Coord {
@@ -101,7 +104,6 @@ fn create_board(mut commands: Commands) {
 pub struct BoardEntity(pub Entity);
 
 pub struct UpdateBoardEvent;
-
 fn update(
     mut commands: Commands,
     board_entity: Res<BoardEntity>,
@@ -140,16 +142,18 @@ fn update(
 
     let mut children = Vec::new();
 
-
     for (coord, tile) in tiles_q.iter() {
         let pos = coord.texture_coords(scale);
         let mut transform =
-        let color = if coord.parity() == 1 {
             Transform::from_xyz(pos.0, pos.1, 1.0).with_scale(Vec3::from_array([scale / 240.0; 3]));
+        let parity = coord.parity();
+        transform.scale.y *= parity as f32;
+        transform.translation.z += 0.1 * parity as f32;
+        let color = if *coord == Coord(0, 0) {
+            Color::AQUAMARINE
+        } else if parity == 1 {
             Color::GRAY
         } else {
-            transform.scale.y = -transform.scale.y;
-            transform.translation.z -= 0.1;
             Color::WHITE
         };
         let child = commands.spawn_bundle(SpriteBundle {
@@ -170,6 +174,7 @@ fn update(
             let pos = coord.world_coords(scale);
             let transform = Transform::from_xyz(pos.0, pos.1, 1.5)
                 .with_scale(Vec3::from_array([scale / 685.714; 3]));
+
             let piece_child = commands.spawn_bundle(SpriteBundle {
                 texture: circle.clone(),
                 sprite: Sprite {
@@ -232,10 +237,47 @@ fn shear(
         render_writer.send(UpdateBoardEvent);
     }
 }
+
+fn text_input(
+    mut reader: EventReader<ReceivedCharacter>,
+    mut text: Local<String>,
+    mut writer: EventWriter<TextCommandEvent>,
+) {
+    let mut updated = false;
+
+    for event in reader.iter() {
+        if event.char == '\x0d' {
+            writer.send(TextCommandEvent(text.clone()));
+            text.clear();
+        } else if event.char == '\x7f' {
+            text.pop();
+        } else {
+            text.push(event.char);
         }
-    } else {
-        return;
+        updated = true;
     }
 
-    render_writer.send(UpdateBoardEvent);
+    if updated {
+        use std::io::Write;
+        print!("\r{}\x1b[J", *text);
+        std::io::stdout().flush().unwrap();
+    }
+}
+
+struct TextCommandEvent(String);
+fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWriter<ShearEvent>) {
+    for TextCommandEvent(command) in reader.iter() {
+        if let Some(command) = command.strip_prefix("shear ") {
+            let (mut origin, mut end): (Coord, Coord) = Default::default();
+            let (origin_s, end_s) = command.split_once(' ').unwrap();
+            for (val, s) in [(&mut origin, origin_s), (&mut end, end_s)] {
+                let (p1_s, p2_s) = s.split_once(',').unwrap();
+                for (val, s) in [(&mut val.0, p1_s), (&mut val.1, p2_s)] {
+                    *val = s.parse::<isize>().unwrap();
+                }
+            }
+
+            writer.send(ShearEvent(origin, end));
+        }
+    }
 }
