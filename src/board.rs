@@ -144,6 +144,7 @@ fn update(
 
     let mut children = Vec::new();
 
+    let mut found_origin = false;
     for (coord, tile) in tiles_q.iter() {
         let pos = coord.texture_coords(scale);
         let mut transform =
@@ -152,6 +153,7 @@ fn update(
         transform.scale.y *= parity as f32;
         transform.translation.z += 0.1 * parity as f32;
         let color = if *coord == Coord(0, 0) {
+            found_origin = true;
             Color::AQUAMARINE
         } else if parity == 1 {
             Color::GRAY
@@ -188,6 +190,23 @@ fn update(
             });
             children.push(piece_child.id());
         }
+    }
+    if !found_origin {
+        let pos = Coord(0, 0).texture_coords(scale);
+        let mut transform =
+            Transform::from_xyz(pos.0, pos.1, 1.0).with_scale(Vec3::from_array([scale / 240.0; 3]));
+        let parity = Coord(0, 0).parity();
+        transform.scale.y *= parity as f32;
+        transform.translation.z += 0.1 * parity as f32;
+        commands.spawn_bundle(SpriteBundle {
+            texture: triangle,
+            sprite: Sprite {
+                color: Color::BISQUE,
+                ..Default::default()
+            },
+            transform,
+            ..Default::default()
+        });
     }
 
     let mut board_entity = commands.entity(board_entity.0);
