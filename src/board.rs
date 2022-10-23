@@ -132,18 +132,21 @@ fn update(
         *coord -= center;
     }
 
+    let scale = 600.0
+        / ((bounds.0 .1 - bounds.0 .0) as f32 / 2.0)
+            .max((bounds.1 .1 - bounds.1 .0) as f32 * 2.0 / 3f32.sqrt());
+
     let triangle = asset_server.load("triangle.png");
     let circle = asset_server.load("circle.png");
 
     let mut children = Vec::new();
 
-    let scale = 96.0;
 
     for (coord, tile) in tiles_q.iter() {
         let pos = coord.texture_coords(scale);
         let mut transform =
-            Transform::from_xyz(pos.0, pos.1, 1.0).with_scale(Vec3::from_array([0.4; 3]));
         let color = if coord.parity() == 1 {
+            Transform::from_xyz(pos.0, pos.1, 1.0).with_scale(Vec3::from_array([scale / 240.0; 3]));
             Color::GRAY
         } else {
             transform.scale.y = -transform.scale.y;
@@ -166,8 +169,8 @@ fn update(
                 Piece::Red => Color::RED,
             };
             let pos = coord.world_coords(scale);
-            let transform =
-                Transform::from_xyz(pos.0, pos.1, 1.5).with_scale(Vec3::from_array([0.14; 3]));
+            let transform = Transform::from_xyz(pos.0, pos.1, 1.5)
+                .with_scale(Vec3::from_array([scale / 685.714; 3]));
             let piece_child = commands.spawn_bundle(SpriteBundle {
                 texture: circle.clone(),
                 sprite: Sprite {
