@@ -9,6 +9,7 @@ impl Plugin for BoardPlugin {
             .add_startup_system(create_board)
             .add_startup_system(board_startup)
             .add_system(update)
+            .add_system(r#move)
             .add_system(shear)
             .add_system(text_input)
             .add_system(text_command);
@@ -195,7 +196,40 @@ fn update(
 }
 
 pub enum ActionEvent {
+    Move(Coord, Coord),
     Shear(Coord, Coord),
+}
+
+fn r#move(
+    mut tiles_q: Query<(&Coord, &mut Tile)>,
+    mut reader: EventReader<ActionEvent>,
+    mut update_writer: EventWriter<UpdateBoardEvent>,
+) {
+    for event in reader.iter() {
+        let (origin, end) = match event {
+            ActionEvent::Move(origin, end) => (origin, end),
+            _ => continue,
+        };
+
+        let (mut origin_tile, mut end_tile) = (None, None);
+        for (coord, tile) in tiles_q.iter_mut() {
+            if *coord == *origin {
+                origin_tile = Some(tile);
+            } else if *coord == *end {
+                end_tile = Some(tile);
+            }
+
+            if origin_tile.as_ref().and(end_tile.as_ref()).is_some() {
+                break;
+            }
+        }
+
+        if let (Some(mut origin_tile), Some(mut end_tile)) = (origin_tile, end_tile) {
+            std::mem::swap(origin_tile.as_mut(), end_tile.as_mut());
+        }
+
+        update_writer.send(UpdateBoardEvent);
+    }
 }
 
 fn shear(
@@ -276,7 +310,18 @@ fn text_input(
 struct TextCommandEvent(String);
 fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWriter<ActionEvent>) {
     for TextCommandEvent(command) in reader.iter() {
-        if let Some(command) = command.strip_prefix("shear ") {
+        if let Some(command) = command.strip_prefix("move ") {
+            let (mut origin, mut end): (Coord, Coord) = Default::default();
+            let (origin_s, end_s) = command.split_once(' ').unwrap();
+            for (val, s) in [(&mut origin, origin_s), (&mut end, end_s)] {
+                let (p1_s, p2_s) = s.split_once(',').unwrap();
+                for (val, s) in [(&mut val.0, p1_s), (&mut val.1, p2_s)] {
+                    *val = s.parse::<isize>().unwrap();
+                }
+            }
+
+            writer.send(ActionEvent::Move(origin, end));
+        } else if let Some(command) = command.strip_prefix("shear ") {
             let (mut origin, mut end): (Coord, Coord) = Default::default();
             let (origin_s, end_s) = command.split_once(' ').unwrap();
             for (val, s) in [(&mut origin, origin_s), (&mut end, end_s)] {
