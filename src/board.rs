@@ -4,7 +4,7 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<UpdateBoardEvent>()
-            .add_event::<ShearEvent>()
+            .add_event::<ActionEvent>()
             .add_event::<TextCommandEvent>()
             .add_startup_system(create_board)
             .add_startup_system(board_startup)
@@ -193,13 +193,21 @@ fn update(
     board_entity.push_children(&children);
 }
 
-pub struct ShearEvent(pub Coord, pub Coord);
+pub enum ActionEvent {
+    Shear(Coord, Coord),
+}
+
 fn shear(
     mut tiles_q: Query<&mut Coord, With<Tile>>,
-    mut reader: EventReader<ShearEvent>,
+    mut reader: EventReader<ActionEvent>,
     mut update_writer: EventWriter<UpdateBoardEvent>,
 ) {
-    for ShearEvent(origin, end) in reader.iter() {
+    for event in reader.iter() {
+        let (origin, end) = match event {
+            ActionEvent::Shear(origin, end) => (origin, end),
+            _ => continue,
+        };
+
         if origin.parity() != end.parity() {
             return;
         }
@@ -265,7 +273,7 @@ fn text_input(
 }
 
 struct TextCommandEvent(String);
-fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWriter<ShearEvent>) {
+fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWriter<ActionEvent>) {
     for TextCommandEvent(command) in reader.iter() {
         if let Some(command) = command.strip_prefix("shear ") {
             let (mut origin, mut end): (Coord, Coord) = Default::default();
@@ -277,7 +285,7 @@ fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWrit
                 }
             }
 
-            writer.send(ShearEvent(origin, end));
+            writer.send(ActionEvent::Shear(origin, end));
         }
     }
 }
