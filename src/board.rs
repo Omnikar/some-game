@@ -111,6 +111,7 @@ fn update(
     asset_server: Res<AssetServer>,
     mut reader: EventReader<UpdateBoardEvent>,
 ) {
+    // Only check if there is a single update event or not, no need to handle multiple.
     if reader.iter().next().is_none() {
         return;
     }
