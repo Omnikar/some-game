@@ -101,7 +101,6 @@ fn create_board(mut commands: Commands) {
 pub struct BoardEntity(pub Entity);
 
 pub struct UpdateBoardEvent;
-pub struct ShearEvent(pub Coord, pub Coord);
 
 fn update(
     mut commands: Commands,
@@ -189,45 +188,50 @@ fn update(
     board_entity.push_children(&children);
 }
 
+pub struct ShearEvent(pub Coord, pub Coord);
 fn shear(
-    mut tiles_q: Query<&mut Coord>,
+    mut tiles_q: Query<&mut Coord, With<Tile>>,
     mut reader: EventReader<ShearEvent>,
     mut render_writer: EventWriter<UpdateBoardEvent>,
 ) {
-    let ShearEvent(origin, end) = match reader.iter().next() {
-        Some(event) => event,
-        None => return,
-    };
-
-    if origin.parity() != end.parity() {
-        return;
-    }
-
-    let parity = origin.parity();
-    if origin.1 == end.1 {
-        let shear_coords = tiles_q
-            .iter_mut()
-            .filter(|coord| coord.1 * parity >= origin.1 * parity);
-        let shear_distance = end.0 - origin.0;
-        for mut coord in shear_coords {
-            coord.0 += shear_distance;
+    for ShearEvent(origin, end) in reader.iter() {
+        if origin.parity() != end.parity() {
+            return;
         }
-    } else if end.0 - origin.0 == end.1 - origin.1 {
+
         let parity = origin.parity();
-        let shear_coords = tiles_q
-            .iter_mut()
-            .filter(|coord| (coord.0 - origin.0) * parity >= (coord.1 - origin.1) * parity);
-        let shear_delta = *end - *origin;
-        for mut coord in shear_coords {
-            *coord += shear_delta;
+        if origin.1 == end.1 {
+            let shear_coords = tiles_q
+                .iter_mut()
+                .filter(|coord| coord.1 * parity >= origin.1 * parity);
+            let shear_distance = end.0 - origin.0;
+            for mut coord in shear_coords {
+                coord.0 += shear_distance;
+            }
+        } else if end.0 - origin.0 == end.1 - origin.1 {
+            let parity = origin.parity();
+            let shear_coords = tiles_q
+                .iter_mut()
+                .filter(|coord| (coord.0 - origin.0) * parity >= (coord.1 - origin.1) * parity);
+            let shear_delta = *end - *origin;
+            for mut coord in shear_coords {
+                *coord += shear_delta;
+            }
+        } else if origin.0 - end.0 == end.1 - origin.1 {
+            let shear_coords = tiles_q
+                .iter_mut()
+                .filter(|coord| (origin.0 - coord.0) * parity >= (coord.1 - origin.1) * parity);
+            let shear_delta = *end - *origin;
+            for mut coord in shear_coords {
+                *coord += shear_delta;
+            }
+        } else {
+            return;
         }
-    } else if origin.0 - end.0 == end.1 - origin.1 {
-        let shear_coords = tiles_q
-            .iter_mut()
-            .filter(|coord| (origin.0 - coord.0) * parity >= (coord.1 - origin.1) * parity);
-        let shear_delta = *end - *origin;
-        for mut coord in shear_coords {
-            *coord += shear_delta;
+
+        render_writer.send(UpdateBoardEvent);
+    }
+}
         }
     } else {
         return;
