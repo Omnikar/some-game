@@ -3,7 +3,8 @@ use bevy::prelude::*;
 pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<UpdateBoardEvent>()
+        app.insert_resource(DisplayScale(1.0))
+            .add_event::<UpdateBoardEvent>()
             .add_event::<ActionEvent>()
             .add_event::<TextCommandEvent>()
             .add_startup_system(create_board)
@@ -12,7 +13,8 @@ impl Plugin for BoardPlugin {
             .add_system(r#move)
             .add_system(shear)
             .add_system(text_input)
-            .add_system(text_command);
+            .add_system(text_command)
+            .add_system(mouse_hover);
     }
 }
 
@@ -57,7 +59,7 @@ impl Coord {
     pub fn texture_coords(self, scale: f32) -> (f32, f32) {
         (
             self.0 as f32 * scale / 2.0,
-            (self.1 as f32 * 3f32.sqrt() / 2.0) * scale,
+            self.1 as f32 * 3f32.sqrt() / 2.0 * scale,
         )
     }
 
@@ -65,6 +67,14 @@ impl Coord {
         let mut coords = self.texture_coords(scale);
         coords.1 -= self.parity() as f32 * scale * 3f32.sqrt() / 12.0;
         coords
+    }
+
+    // Not quite accurate at side corners
+    fn from_world_coords(coords: (f32, f32), scale: f32) -> Self {
+        Coord(
+            (coords.0 * 2.0 / scale).round() as isize,
+            (coords.1 / scale * 2.0 / 3f32.sqrt()).round() as isize,
+        )
     }
 }
 
@@ -103,12 +113,14 @@ fn create_board(mut commands: Commands) {
 }
 
 pub struct BoardEntity(pub Entity);
+pub struct DisplayScale(f32);
 
 pub struct UpdateBoardEvent;
 fn update(
     mut commands: Commands,
     board_entity: Res<BoardEntity>,
     mut tiles_q: Query<(&mut Coord, &Tile)>,
+    mut scale_res: ResMut<DisplayScale>,
     asset_server: Res<AssetServer>,
     mut reader: EventReader<UpdateBoardEvent>,
 ) {
@@ -138,13 +150,13 @@ fn update(
     let scale = 600.0
         / ((bounds.0 .1 - bounds.0 .0) as f32 / 2.0)
             .max((bounds.1 .1 - bounds.1 .0) as f32 * 2.0 / 3f32.sqrt());
+    *scale_res = DisplayScale(scale);
 
     let triangle = asset_server.load("triangle.png");
     let circle = asset_server.load("circle.png");
 
     let mut children = Vec::new();
 
-    let mut found_origin = false;
     for (coord, tile) in tiles_q.iter() {
         let pos = coord.texture_coords(scale);
         let mut transform =
@@ -152,10 +164,7 @@ fn update(
         let parity = coord.parity();
         transform.scale.y *= parity as f32;
         transform.translation.z += 0.1 * parity as f32;
-        let color = if *coord == Coord(0, 0) {
-            found_origin = true;
-            Color::AQUAMARINE
-        } else if parity == 1 {
+        let color = if parity == 1 {
             Color::GRAY
         } else {
             Color::WHITE
@@ -190,23 +199,6 @@ fn update(
             });
             children.push(piece_child.id());
         }
-    }
-    if !found_origin {
-        let pos = Coord(0, 0).texture_coords(scale);
-        let mut transform =
-            Transform::from_xyz(pos.0, pos.1, 1.0).with_scale(Vec3::from_array([scale / 240.0; 3]));
-        let parity = Coord(0, 0).parity();
-        transform.scale.y *= parity as f32;
-        transform.translation.z += 0.1 * parity as f32;
-        commands.spawn_bundle(SpriteBundle {
-            texture: triangle,
-            sprite: Sprite {
-                color: Color::BISQUE,
-                ..Default::default()
-            },
-            transform,
-            ..Default::default()
-        });
     }
 
     let mut board_entity = commands.entity(board_entity.0);
@@ -353,4 +345,31 @@ fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWrit
             writer.send(ActionEvent::Shear(origin, end));
         }
     }
+}
+
+fn mouse_hover(
+    windows: Res<Windows>,
+    camera_q: Query<(&Camera, &GlobalTransform)>,
+    mut reader: EventReader<CursorMoved>,
+    scale: Res<DisplayScale>,
+) {
+    // Take the last mouse move event to get the most up-to-date position.
+    let event = match reader.iter().last() {
+        Some(event) => event,
+        None => return,
+    };
+    let screen_pos = event.position;
+
+    let (camera, camera_transform) = camera_q.single();
+
+    let window = windows.get_primary().unwrap();
+    let window_size = Vec2::new(window.width() as f32, window.height() as f32);
+    let ndc = screen_pos / window_size * 2.0 - Vec2::ONE;
+    let ndc_to_world = camera_transform.compute_matrix() * camera.projection_matrix().inverse();
+    let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0)).truncate();
+
+    let board_pos = Coord::from_world_coords(world_pos.into(), scale.0);
+    use std::io::Write;
+    print!("\r{},{}\x1b[J", board_pos.0, board_pos.1);
+    std::io::stdout().flush().unwrap();
 }
