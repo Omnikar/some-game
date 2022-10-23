@@ -197,7 +197,7 @@ pub struct ShearEvent(pub Coord, pub Coord);
 fn shear(
     mut tiles_q: Query<&mut Coord, With<Tile>>,
     mut reader: EventReader<ShearEvent>,
-    mut render_writer: EventWriter<UpdateBoardEvent>,
+    mut update_writer: EventWriter<UpdateBoardEvent>,
 ) {
     for ShearEvent(origin, end) in reader.iter() {
         if origin.parity() != end.parity() {
@@ -234,7 +234,7 @@ fn shear(
             return;
         }
 
-        render_writer.send(UpdateBoardEvent);
+        update_writer.send(UpdateBoardEvent);
     }
 }
 
