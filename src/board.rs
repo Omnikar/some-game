@@ -12,6 +12,7 @@ impl Plugin for BoardPlugin {
             .add_system(update)
             .add_system(r#move)
             .add_system(shear)
+            .add_system(set)
             .add_system(text_input)
             .add_system(text_command)
             .add_system(mouse_hover);
@@ -80,8 +81,8 @@ impl Coord {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Piece {
-    Blue,
-    Red,
+    Blue(bool),
+    Red(bool),
 }
 
 #[derive(Clone, Copy, Default, Component)]
@@ -99,10 +100,17 @@ fn create_board(mut commands: Commands) {
             (
                 pos,
                 Tile {
-                    piece: match pos.1 {
-                        -3 => Some(Piece::Blue),
-                        2 => Some(Piece::Red),
-                        _ => None,
+                    // piece: match pos.1 {
+                    //     -3 => Some(Piece::Blue(pos.0 == 0)),
+                    //     2 => Some(Piece::Red(pos.0 == 0)),
+                    //     _ => None,
+                    // },
+                    piece: if pos.parity() == 1 && (pos.1 == -2 || pos.1 == -3) {
+                        Some(Piece::Blue(pos.0 == 0))
+                    } else if pos.parity() == -1 && (pos.1 == 1 || pos.1 == 2) {
+                        Some(Piece::Red(pos.0 == 0))
+                    } else {
+                        None
                     },
                 },
             )
@@ -181,8 +189,20 @@ fn update(
         children.push(child.id());
         if let Some(piece) = tile.piece {
             let color = match piece {
-                Piece::Blue => Color::BLUE,
-                Piece::Red => Color::RED,
+                Piece::Blue(king) => {
+                    if king {
+                        Color::NAVY
+                    } else {
+                        Color::BLUE
+                    }
+                }
+                Piece::Red(king) => {
+                    if king {
+                        Color::MAROON
+                    } else {
+                        Color::RED
+                    }
+                }
             };
             let pos = coord.world_coords(scale);
             let transform = Transform::from_xyz(pos.0, pos.1, 1.5)
@@ -209,6 +229,7 @@ fn update(
 pub enum ActionEvent {
     Move(Coord, Coord),
     Shear(Coord, Coord),
+    Set(Coord, Option<Piece>),
 }
 
 fn r#move(
@@ -292,6 +313,31 @@ fn shear(
     }
 }
 
+fn set(
+    mut tiles_q: Query<(&Coord, &mut Tile)>,
+    mut reader: EventReader<ActionEvent>,
+    mut update_writer: EventWriter<UpdateBoardEvent>,
+) {
+    for event in reader.iter() {
+        let (coord, piece) = match event {
+            ActionEvent::Set(coord, piece) => (coord, piece),
+            _ => continue,
+        };
+
+        let mut tile = match tiles_q
+            .iter_mut()
+            .find_map(|(tile_coord, tile)| (tile_coord == coord).then_some(tile))
+        {
+            Some(tile) => tile,
+            None => return,
+        };
+
+        tile.piece = *piece;
+
+        update_writer.send(UpdateBoardEvent);
+    }
+}
+
 fn text_input(
     mut reader: EventReader<ReceivedCharacter>,
     mut text: Local<String>,
@@ -320,29 +366,73 @@ fn text_input(
 
 struct TextCommandEvent(String);
 fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWriter<ActionEvent>) {
-    for TextCommandEvent(command) in reader.iter() {
+    'outer: for TextCommandEvent(command) in reader.iter() {
         if let Some(command) = command.strip_prefix("move ") {
             let (mut origin, mut end): (Coord, Coord) = Default::default();
-            let (origin_s, end_s) = command.split_once(' ').unwrap();
+            let (origin_s, end_s) = match command.split_once(' ') {
+                Some(val) => val,
+                None => continue 'outer,
+            };
             for (val, s) in [(&mut origin, origin_s), (&mut end, end_s)] {
-                let (p1_s, p2_s) = s.split_once(',').unwrap();
+                let (p1_s, p2_s) = match s.split_once(',') {
+                    Some(val) => val,
+                    None => continue 'outer,
+                };
                 for (val, s) in [(&mut val.0, p1_s), (&mut val.1, p2_s)] {
-                    *val = s.parse::<isize>().unwrap();
+                    *val = match s.parse::<isize>() {
+                        Ok(val) => val,
+                        Err(_) => continue 'outer,
+                    };
                 }
             }
 
             writer.send(ActionEvent::Move(origin, end));
         } else if let Some(command) = command.strip_prefix("shear ") {
             let (mut origin, mut end): (Coord, Coord) = Default::default();
-            let (origin_s, end_s) = command.split_once(' ').unwrap();
+            let (origin_s, end_s) = match command.split_once(' ') {
+                Some(val) => val,
+                None => continue 'outer,
+            };
             for (val, s) in [(&mut origin, origin_s), (&mut end, end_s)] {
-                let (p1_s, p2_s) = s.split_once(',').unwrap();
+                let (p1_s, p2_s) = match s.split_once(',') {
+                    Some(val) => val,
+                    None => continue 'outer,
+                };
                 for (val, s) in [(&mut val.0, p1_s), (&mut val.1, p2_s)] {
-                    *val = s.parse::<isize>().unwrap();
+                    *val = match s.parse::<isize>() {
+                        Ok(val) => val,
+                        Err(_) => continue 'outer,
+                    };
                 }
             }
 
             writer.send(ActionEvent::Shear(origin, end));
+        } else if let Some(command) = command.strip_prefix("set ") {
+            let mut coord = Coord::default();
+            let (coord_s, piece_s) = match command.split_once(' ') {
+                Some(val) => val,
+                None => continue 'outer,
+            };
+            let (p1_s, p2_s) = match coord_s.split_once(',') {
+                Some(val) => val,
+                None => continue 'outer,
+            };
+            for (val, s) in [(&mut coord.0, p1_s), (&mut coord.1, p2_s)] {
+                *val = match s.parse::<isize>() {
+                    Ok(val) => val,
+                    Err(_) => continue 'outer,
+                };
+            }
+            let piece = match piece_s {
+                "empty" => None,
+                "blue" => Some(Piece::Blue(false)),
+                "blue-special" => Some(Piece::Blue(true)),
+                "red" => Some(Piece::Red(false)),
+                "red-special" => Some(Piece::Red(true)),
+                _ => continue 'outer,
+            };
+
+            writer.send(ActionEvent::Set(coord, piece));
         }
     }
 }
