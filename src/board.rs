@@ -74,12 +74,16 @@ impl Coord {
         coords
     }
 
-    // Not quite accurate at side corners
     fn from_world_coords(coords: (f32, f32), scale: f32) -> Self {
-        Coord(
-            (coords.0 * 2.0 / scale).round() as isize,
-            (coords.1 / scale * 2.0 / 3f32.sqrt()).round() as isize,
-        )
+        let y_f = coords.1 * 2.0 / scale / 3f32.sqrt();
+        let y_rd = y_f.round();
+        let y = y_rd as isize;
+        let x_f = coords.0 * 2.0 / scale;
+        let x_fl = x_f.floor();
+        let bias_mul = ((x_fl as isize ^ y) & 1) * 2 - 1;
+        let bias = (y_rd - y_f) * bias_mul as f32;
+        let x = (x_f + bias).round() as isize;
+        Coord(x, y)
     }
 }
 
