@@ -7,12 +7,11 @@ use bevy::prelude::*;
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::BLACK))
-        .add_plugin(BoardPlugin)
-        .add_plugins(DefaultPlugins)
-        .add_startup_system(setup)
+        .add_plugins((BoardPlugin, DefaultPlugins))
+        .add_systems(Startup, setup)
         .run();
 }
 
 fn setup(mut commands: Commands) {
-    commands.spawn_bundle(Camera2dBundle::default());
+    commands.spawn(Camera2dBundle::default());
 }

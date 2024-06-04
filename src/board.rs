@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, window::PrimaryWindow};
 
 pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
@@ -7,20 +7,24 @@ impl Plugin for BoardPlugin {
             .add_event::<UpdateBoardEvent>()
             .add_event::<ActionEvent>()
             .add_event::<TextCommandEvent>()
-            .add_startup_system(create_board)
-            .add_startup_system(board_startup)
-            .add_system(update)
-            .add_system(r#move)
-            .add_system(shear)
-            .add_system(set)
-            .add_system(text_input)
-            .add_system(text_command)
-            .add_system(mouse_hover);
+            .add_systems(Startup, (create_board, board_startup))
+            .add_systems(
+                Update,
+                (
+                    update,
+                    r#move,
+                    shear,
+                    set,
+                    text_input,
+                    text_command,
+                    mouse_hover,
+                ),
+            );
     }
 }
 
 fn board_startup(mut commands: Commands, mut render_writer: EventWriter<UpdateBoardEvent>) {
-    let board_entity = BoardEntity(commands.spawn_bundle(SpatialBundle::default()).id());
+    let board_entity = BoardEntity(commands.spawn(SpatialBundle::default()).id());
     commands.insert_resource(board_entity);
 
     render_writer.send(UpdateBoardEvent);
@@ -116,13 +120,16 @@ fn create_board(mut commands: Commands) {
             )
         })
         .for_each(|(coord, tile)| {
-            commands.spawn().insert(coord).insert(tile);
+            commands.spawn((coord, tile));
         });
 }
 
+#[derive(Resource)]
 pub struct BoardEntity(pub Entity);
+#[derive(Resource)]
 pub struct DisplayScale(f32);
 
+#[derive(Event)]
 pub struct UpdateBoardEvent;
 fn update(
     mut commands: Commands,
@@ -133,7 +140,7 @@ fn update(
     mut reader: EventReader<UpdateBoardEvent>,
 ) {
     // Only check if there is a single update event or not, no need to handle multiple.
-    if reader.iter().next().is_none() {
+    if reader.read().next().is_none() {
         return;
     }
 
@@ -177,7 +184,7 @@ fn update(
         } else {
             Color::WHITE
         };
-        let child = commands.spawn_bundle(SpriteBundle {
+        let child = commands.spawn(SpriteBundle {
             texture: triangle.clone(),
             sprite: Sprite {
                 color,
@@ -208,7 +215,7 @@ fn update(
             let transform = Transform::from_xyz(pos.0, pos.1, 1.5)
                 .with_scale(Vec3::from_array([scale / 685.714; 3]));
 
-            let piece_child = commands.spawn_bundle(SpriteBundle {
+            let piece_child = commands.spawn(SpriteBundle {
                 texture: circle.clone(),
                 sprite: Sprite {
                     color,
@@ -226,6 +233,7 @@ fn update(
     board_entity.push_children(&children);
 }
 
+#[derive(Event)]
 pub enum ActionEvent {
     Move(Coord, Coord),
     Shear(Coord, Coord),
@@ -237,10 +245,9 @@ fn r#move(
     mut reader: EventReader<ActionEvent>,
     mut update_writer: EventWriter<UpdateBoardEvent>,
 ) {
-    for event in reader.iter() {
-        let (origin, end) = match event {
-            ActionEvent::Move(origin, end) => (origin, end),
-            _ => continue,
+    for event in reader.read() {
+        let ActionEvent::Move(origin, end) = event else {
+            continue;
         };
 
         let (mut origin_tile, mut end_tile) = (None, None);
@@ -269,10 +276,9 @@ fn shear(
     mut reader: EventReader<ActionEvent>,
     mut update_writer: EventWriter<UpdateBoardEvent>,
 ) {
-    for event in reader.iter() {
-        let (origin, end) = match event {
-            ActionEvent::Shear(origin, end) => (origin, end),
-            _ => continue,
+    for event in reader.read() {
+        let ActionEvent::Shear(origin, end) = event else {
+            continue;
         };
 
         if origin.parity() != end.parity() {
@@ -318,18 +324,16 @@ fn set(
     mut reader: EventReader<ActionEvent>,
     mut update_writer: EventWriter<UpdateBoardEvent>,
 ) {
-    for event in reader.iter() {
-        let (coord, piece) = match event {
-            ActionEvent::Set(coord, piece) => (coord, piece),
-            _ => continue,
+    for event in reader.read() {
+        let ActionEvent::Set(coord, piece) = event else {
+            continue;
         };
 
-        let mut tile = match tiles_q
+        let Some(mut tile) = tiles_q
             .iter_mut()
             .find_map(|(tile_coord, tile)| (tile_coord == coord).then_some(tile))
-        {
-            Some(tile) => tile,
-            None => return,
+        else {
+            return;
         };
 
         tile.piece = *piece;
@@ -345,14 +349,15 @@ fn text_input(
 ) {
     let mut updated = false;
 
-    for event in reader.iter() {
-        if event.char == '\x0d' {
+    for event in reader.read() {
+        let c = event.char.chars().last().unwrap();
+        if c == '\x0d' {
             writer.send(TextCommandEvent(text.clone()));
             text.clear();
-        } else if event.char == '\x7f' {
+        } else if c == '\x08' || c == '\x7f' {
             text.pop();
         } else {
-            text.push(event.char);
+            text.push(c);
         }
         updated = true;
     }
@@ -364,19 +369,18 @@ fn text_input(
     }
 }
 
+#[derive(Event)]
 struct TextCommandEvent(String);
 fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWriter<ActionEvent>) {
-    'outer: for TextCommandEvent(command) in reader.iter() {
+    'outer: for TextCommandEvent(command) in reader.read() {
         if let Some(command) = command.strip_prefix("move ") {
             let (mut origin, mut end): (Coord, Coord) = Default::default();
-            let (origin_s, end_s) = match command.split_once(' ') {
-                Some(val) => val,
-                None => continue 'outer,
+            let Some((origin_s, end_s)) = command.split_once(' ') else {
+                continue 'outer;
             };
             for (val, s) in [(&mut origin, origin_s), (&mut end, end_s)] {
-                let (p1_s, p2_s) = match s.split_once(',') {
-                    Some(val) => val,
-                    None => continue 'outer,
+                let Some((p1_s, p2_s)) = s.split_once(',') else {
+                    continue 'outer;
                 };
                 for (val, s) in [(&mut val.0, p1_s), (&mut val.1, p2_s)] {
                     *val = match s.parse::<isize>() {
@@ -389,14 +393,12 @@ fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWrit
             writer.send(ActionEvent::Move(origin, end));
         } else if let Some(command) = command.strip_prefix("shear ") {
             let (mut origin, mut end): (Coord, Coord) = Default::default();
-            let (origin_s, end_s) = match command.split_once(' ') {
-                Some(val) => val,
-                None => continue 'outer,
+            let Some((origin_s, end_s)) = command.split_once(' ') else {
+                continue 'outer;
             };
             for (val, s) in [(&mut origin, origin_s), (&mut end, end_s)] {
-                let (p1_s, p2_s) = match s.split_once(',') {
-                    Some(val) => val,
-                    None => continue 'outer,
+                let Some((p1_s, p2_s)) = s.split_once(',') else {
+                    continue 'outer;
                 };
                 for (val, s) in [(&mut val.0, p1_s), (&mut val.1, p2_s)] {
                     *val = match s.parse::<isize>() {
@@ -409,13 +411,11 @@ fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWrit
             writer.send(ActionEvent::Shear(origin, end));
         } else if let Some(command) = command.strip_prefix("set ") {
             let mut coord = Coord::default();
-            let (coord_s, piece_s) = match command.split_once(' ') {
-                Some(val) => val,
-                None => continue 'outer,
+            let Some((coord_s, piece_s)) = command.split_once(' ') else {
+                continue 'outer;
             };
-            let (p1_s, p2_s) = match coord_s.split_once(',') {
-                Some(val) => val,
-                None => continue 'outer,
+            let Some((p1_s, p2_s)) = coord_s.split_once(',') else {
+                continue 'outer;
             };
             for (val, s) in [(&mut coord.0, p1_s), (&mut coord.1, p2_s)] {
                 *val = match s.parse::<isize>() {
@@ -438,28 +438,27 @@ fn text_command(mut reader: EventReader<TextCommandEvent>, mut writer: EventWrit
 }
 
 fn mouse_hover(
-    windows: Res<Windows>,
+    window_q: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mut reader: EventReader<CursorMoved>,
     scale: Res<DisplayScale>,
 ) {
     // Take the last mouse move event to get the most up-to-date position.
-    let event = match reader.iter().last() {
-        Some(event) => event,
-        None => return,
+    let Some(event) = reader.read().last() else {
+        return;
     };
     let screen_pos = event.position;
 
     let (camera, camera_transform) = camera_q.single();
 
-    let window = windows.get_primary().unwrap();
-    let window_size = Vec2::new(window.width() as f32, window.height() as f32);
+    let window = window_q.get_single().unwrap();
+    let window_size = Vec2::new(window.width(), window.height());
     let ndc = screen_pos / window_size * 2.0 - Vec2::ONE;
     let ndc_to_world = camera_transform.compute_matrix() * camera.projection_matrix().inverse();
     let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0)).truncate();
 
     let board_pos = Coord::from_world_coords(world_pos.into(), scale.0);
     use std::io::Write;
-    print!("\r{},{}\x1b[J", board_pos.0, board_pos.1);
+    print!("\r{},{}\x1b[J", board_pos.0, -board_pos.1);
     std::io::stdout().flush().unwrap();
 }
